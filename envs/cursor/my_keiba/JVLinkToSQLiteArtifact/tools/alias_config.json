@@ -1,0 +1,66 @@
+{
+  "race_keys": {
+    "race_id_col": "A",
+    "race_name_simple_col": "B",
+    "race_name_full_col": "C",
+    "distance_col": "D"
+  },
+  "race_arena_cols": {
+    "r_zi_gap_col": "F",
+    "r_zm_gap_col": "G",
+    "r_takeuchi_prev23_col": "H"
+  },
+  "horse_keys": {
+    "umaban_col": "番",
+    "jockey_col": "騎手",
+    "trainer_col": "厩舎"
+  },
+  "marks_cols": {
+    "mark1_col": "J",
+    "mark2_speed_col": "K",
+    "mark3_spirit_col": "L",
+    "mark4_prev_zm_rank_col": "M",
+    "mark5_training_orig_col": "N",
+    "mark6_training_accel_col": "O",
+    "mark7_zm_col": "P"
+  },
+  "history_cols": {
+    "prev_running_style_col": "Y",
+    "prev_mark1_start_col": "Z",
+    "prev_mark1_end_col": "AG"
+  },
+  "popularity_cols": {
+    "prev_ninki_col": "AH",
+    "zm_tansho_odds_col": "AI"
+  },
+  "score_cols": {
+    "accel_score_col": "AK",
+    "original_score_col": "AN"
+  },
+  "track_code_map": {
+    "札": "01",
+    "函": "02",
+    "福": "03",
+    "新": "04",
+    "東": "05",
+    "中": "06",
+    "名": "07",
+    "京": "08",
+    "阪": "09",
+    "小": "10",
+    "札幌": "01",
+    "函館": "02",
+    "福島": "03",
+    "新潟": "04",
+    "東京": "05",
+    "中山": "06",
+    "中京": "07",
+    "京都": "08",
+    "阪神": "09",
+    "小倉": "10"
+  }
+}
+
+
+
+

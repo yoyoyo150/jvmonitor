@@ -1,0 +1,78 @@
+{
+  "logic1_rules": {
+    "S": {
+      "description": "最高評価（投資対象）",
+      "conditions": {
+        "win_score_min": 0.1,
+        "m5_value_max": 15.0,
+        "trainer_win_rate_min": 0.05,
+        "jockey_win_rate_min": 0.02,
+        "recent_form_min": 0,
+        "excel_algo_score_min": 40,
+        "zi_value_min": 30
+      }
+    },
+    "A": {
+      "description": "高評価（投資対象）",
+      "conditions": {
+        "win_score_min": 0.05,
+        "m5_value_max": 20.0,
+        "trainer_win_rate_min": 0.03,
+        "jockey_win_rate_min": 0.01,
+        "recent_form_min": 0,
+        "excel_algo_score_min": 30,
+        "zi_value_min": 20
+      }
+    },
+    "B": {
+      "description": "中評価（要検討）",
+      "conditions": {
+        "win_score_min": 0.15,
+        "m5_value_max": 12.0,
+        "trainer_win_rate_min": 0.05,
+        "jockey_win_rate_min": 0.02,
+        "recent_form_min": 0,
+        "excel_algo_score_min": 40,
+        "zi_value_min": 30
+      }
+    },
+    "C": {
+      "description": "普通評価",
+      "conditions": {
+        "win_score_min": 0.1,
+        "m5_value_max": 15.0,
+        "trainer_win_rate_min": 0.03,
+        "jockey_win_rate_min": 0.01,
+        "recent_form_min": 0,
+        "excel_algo_score_min": 30,
+        "zi_value_min": 20
+      }
+    },
+    "D": {
+      "description": "低評価",
+      "conditions": {
+        "win_score_min": 0.05,
+        "m5_value_max": 20.0,
+        "trainer_win_rate_min": 0.02,
+        "jockey_win_rate_min": 0.005,
+        "recent_form_min": 0,
+        "excel_algo_score_min": 20,
+        "zi_value_min": 10
+      }
+    },
+    "E": {
+      "description": "最低評価",
+      "conditions": {}
+    }
+  },
+  "invest_grades": ["S", "A"],
+  "version": "1.1",
+  "created_date": "2025-10-19T12:00:00",
+  "notes": {
+    "algo_score": "オリジナル点数（AN列）- 竹内氏の加速ラップ理論",
+    "m5_value": "加速点数（AK列）- 低いほど良い",
+    "zi_value": "ZI指数（ZI指数列）- 高いほど良い",
+    "zm_value": "ZM値（ZM列）- 予想オッズ関連",
+    "mark2": "馬印2（K列）- アルゴスピード指数順位"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "race_keys": {
+    "race_id": ["レースID(新)"],
+    "track_race_raw": ["場 R"],
+    "race_name": ["レース名"],
+    "surface": ["芝ダ"],
+    "distance": ["距離"]
+  },
+  "race_indicators": {
+    "race_cond_zi": ["R印1"],
+    "race_cond_zm": ["レース印2", "Ｒ印２"],
+    "race_cond_takeuchi": ["レース印3"]
+  },
+  "horse_data": {
+    "horse_number": ["馬番"],
+    "mark_1": ["馬印1"],
+    "mark_2_speed": ["馬印2"],
+    "mark_3_spirit": ["馬印3"],
+    "mark_4_prev_zm": ["馬印4"],
+    "mark_5_original": ["馬印5"],
+    "mark_6_accel": ["馬印6"],
+    "mark_7_zm_pred": ["馬印7"],
+    "z_score_zi": ["ZI指数"],
+    "z_rank_zi": ["指数順位1", "指数順位2", "指数順位3", "指数順位4"],
+    "z_score_zm_odds": ["ZM", "対戦型マイニング値"],
+    "score_accel": ["加速"],
+    "score_original": ["オリジナル"]
+  },
+  "prev_race_horse_data": {
+    "prev_finish_rank": ["前着順"],
+    "prev_run_style": ["前脚質"],
+    "prev_mark_1": ["前馬印1"],
+    "prev_popularity": ["前人気"],
+    "prev_pass_1": ["前通過1"],
+    "prev_pass_2": ["前通過2"],
+    "prev_pass_3": ["前通過3"],
+    "prev_pass_4": ["前通過4"],
+    "prev_race_hint": ["前レースID(新)"]
+  },
+  "bloodline": {
+    "father_type": ["父タイプ名"],
+    "damsire_type": ["母父タイプ名"]
+  }
+}

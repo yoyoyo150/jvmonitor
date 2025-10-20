@@ -1,0 +1,91 @@
+{
+  "fallback_grade": "E",
+  "default_invest_grades": ["S", "A"],
+  "scenarios": {
+    "PRE": {
+      "invest_grades": ["S", "A"],
+      "rules": [
+        {
+          "grade": "S",
+          "conditions": {
+            "min_win_score": 0.75,
+            "max_m5": 1.5,
+            "min_zm": 60,
+            "min_zi": 55,
+            "min_trainer_win": 0.12
+          }
+        },
+        {
+          "grade": "A",
+          "conditions": {
+            "min_win_score": 0.62,
+            "max_m5": 2.0,
+            "min_zm": 55,
+            "min_zi": 50
+          }
+        },
+        {
+          "grade": "B",
+          "conditions": {
+            "min_win_score": 0.52,
+            "min_zm": 48
+          }
+        },
+        {
+          "grade": "C",
+          "conditions": {
+            "min_win_score": 0.45
+          }
+        },
+        {
+          "grade": "D",
+          "conditions": {
+            "min_win_score": 0.35
+          }
+        }
+      ]
+    },
+    "LIVE": {
+      "invest_grades": ["S", "A"],
+      "rules": [
+        {
+          "grade": "S",
+          "conditions": {
+            "min_win_score": 0.78,
+            "max_m5": 1.6,
+            "min_zm": 60,
+            "max_odds": 6.0
+          }
+        },
+        {
+          "grade": "A",
+          "conditions": {
+            "min_win_score": 0.65,
+            "max_m5": 2.2,
+            "min_zm": 55,
+            "max_odds": 12.0
+          }
+        },
+        {
+          "grade": "B",
+          "conditions": {
+            "min_win_score": 0.55,
+            "min_zm": 50
+          }
+        },
+        {
+          "grade": "C",
+          "conditions": {
+            "min_win_score": 0.45
+          }
+        },
+        {
+          "grade": "D",
+          "conditions": {
+            "min_win_score": 0.35
+          }
+        }
+      ]
+    }
+  }
+}

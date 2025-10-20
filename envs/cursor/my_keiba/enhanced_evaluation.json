@@ -1,0 +1,18 @@
+{
+  "scenario": "PRE",
+  "date_from": "2025-10-13",
+  "date_to": "2025-10-13",
+  "total_predictions": 650,
+  "invest_selections": 180,
+  "joined_results": 170,
+  "win_hits": 0,
+  "win_hit_rate": 0.0,
+  "win_roi": -1.0,
+  "place_hits": 0,
+  "place_hit_rate": 0.0,
+  "place_roi": -1.0,
+  "total_investment": 18000,
+  "total_win_payout": 0,
+  "total_place_payout": 0,
+  "evaluation_type": "確定結果比較（前日予想検証）"
+}

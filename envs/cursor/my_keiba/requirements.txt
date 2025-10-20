@@ -1,0 +1,4 @@
+pandas
+openpyxl # for reading excel files
+pyyaml # for yaml files
+

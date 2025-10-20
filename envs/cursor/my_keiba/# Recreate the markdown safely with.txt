@@ -1,0 +1,900 @@
+# Recreate the markdown safely without f-strings (to avoid brace conflicts)
+from datetime import datetime
+
+date_str = datetime.now().strftime('%Y-%m-%d')
+
+template = """
+# JRAVAN データ規則表（前走特化・v1.0）
+更新日: <DATE>
+
+> 目的: **「前走」を用いた予想**に必要な項目を **欠損・誤読なく** 取り込むための、実装向け「規則表」。  
+> 対象: JRA-VAN DataLab（RA/SE/HR/O1...）→ SQLite/Parquet 正規化 → 分析・予測。
+
+---
+
+## 0. 用語と記号
+- **前走**: 当該レース（`RaceDate`）より直近に出走した **JRA** レース（地方・海外は別扱い）。
+- **走破タイム**: 勝ち時計または当該馬の実走破タイム（mm:ss.s 形式）。
+- **着差**: 当該馬が勝ち馬（または上位）に対する差。文字（ハナ/アタマ/クビ）や分数（1/2, 1 1/4）を含む。
+- **通過順**: 各コーナー通過順位（例: `12-11-5-1`）。コーナー数はコースにより 2/3/4。
+- **人気**: 単勝人気（1..18）。
+- **場コード**: 競馬場 2桁コード（例: `05` 東京, `08` 京都）。**ゼロパディング必須**（文字列）。
+
+---
+
+## 1. キーと同定規則
+- **RaceKey**: `YYYYMMDD + 場(2桁) + R(2桁)` を連結した文字列。例: `202411020811` = 2024/11/02・京都(08)・11R。  
+- **EntryKey**: `RaceKey + '_' + Umaban(2桁)`。
+- **HorseID** を主キーとし、**前走リンク**は `HorseID` で同一のレース結果表から `RaceDate < 当日` で **最大** を1件取得する。
+
+### SQL（前走リンク）
+```sql
+WITH prev AS (
+  SELECT
+    e.HorseID,
+    r.RaceKey, r.RaceDate, r.TrackCD, r.RaceNo,
+    he.Finish, he.FinishStatus
+  FROM results_entries he
+  JOIN results_races r ON r.RaceKey = he.RaceKey
+  WHERE he.HorseID IS NOT NULL
+)
+SELECT cur.EntryKey, p.*
+FROM current_entries cur
+LEFT JOIN LATERAL (
+  SELECT * FROM prev p
+   WHERE p.HorseID = cur.HorseID AND p.RaceDate < cur.RaceDate
+   ORDER BY p.RaceDate DESC, p.RaceKey DESC
+   LIMIT 1
+) p ON true;
+
+フォールバック: HorseID 不在時は UmaName + BirthYear + Sex を同一性キーとして暫定リンク（異名/改名に注意）。
+
+2. データ型と桁/フォーマット（厳格規則）
+項目	物理型	正規形	例	備考
+RaceKey	TEXT	12桁文字列	202411020811	ゼロパディング固定
+TrackCD	TEXT	2桁文字列	05	int ではなく TEXT
+RaceNo	TEXT	2桁文字列	11	int ではなく TEXT
+Umaban	INTEGER	1..18	7	
+Wakuban	INTEGER	1..8	4	
+HorseID	TEXT	非NULL	2018100012	不在あり得る
+Finish	INTEGER	1..18	3	同着は同順位を共有
+FinishStatus	TEXT	ENUM	FINISHED/DQ/DNF/DNS/SCR	定義は §3
+FinishTimeRaw	TEXT	m:ss.s or mm:ss.s	1:33.4	: 1個、少数1桁
+FinishTimeSec	REAL	0..600	93.4	障害は上限拡張 0..900
+Last3FRaw	TEXT	ss.s	34.2	
+Last3FSec	REAL	0..60	34.2	
+MarginRaw	TEXT	記号/分数	1/2, ハナ	
+MarginLen	REAL	非負	0.5	換算は §4
+MarginSec	REAL	非負	0.10	Len * 0.2
+TanshoRaw	TEXT	4桁	0024	
+Tansho	REAL	≥1.0	2.4	Raw/10
+Ninki	INTEGER	1..18 or NULL	1	
+CornerOrderRaw	TEXT	a-b[-c-d]	12-11-5-1	
+CornerOrder1..4	INTEGER	1..18 or NULL	12	- split
+WeatherCD	TEXT	コード	1	
+BabaCD	TEXT	コード	1	
+
+merge型違い事故防止: TrackCD/RaceNo は 常に TEXT（先頭ゼロ保持）。Python のマージでは dtype={{'track':'string'}} を指定。
+
+3. 着順とステータスの取り扱い
+
+Finish: 1..18。同着は同順位を共有（例: 1位同着2頭→ Finish=1 が2頭、次位は 3）。
+
+FinishStatus:
+
+FINISHED（完走）: 正常。
+
+DQ（失格）: 公式着順に従い降着後の 確定順位 を格納し、FinishStatus=DQ を別途保持。
+
+DNF（競走中止）: Finish=NULL、FinishStatus=DNF。
+
+DNS（出走取消）: Finish=NULL、FinishStatus=DNS。
+
+SCR（除外）: Finish=NULL、FinishStatus=SCR。
+
+スコアリング（例）: 失格/中止/取消/除外は 学習から除外、もしくは Penalty で管理。
+
+4. 着差（文字→長さ→秒）規則
+4.1 文字→長さ(馬身) 換算（プロジェクト規約）
+
+公式値ではありません。モデル内一貫性を優先します。
+
+表記	Len(馬身)
+ハナ	0.1
+アタマ	0.2
+クビ	0.3
+1/4	0.25
+1/2	0.5
+3/4	0.75
+1 1/4	1.25
+1 1/2	1.5
+1 3/4	1.75
+2	2.0
+2 1/2	2.5
+大差	6.0
+
+自由入力対応: 半角/全角スペース、全角数字を許容。正規化後に分数・整数を解析。
+
+4.2 長さ→秒 換算
+
+MarginSec = MarginLen * 0.20（1馬身=0.20秒 仮定）。
+
+遠距離/障害で調整したい場合は 0.19..0.22 のトラック別係数でテーブル化可。
+
+5. タイムの正規化
+5.1 走破タイム
+
+入力: FinishTimeRaw（例: 1:33.4）。
+
+変換: FinishTimeSec = m*60 + s（小数1桁まで）。
+
+検証: 0 < FinishTimeSec < 600（芝ダ）/ < 900（障害）。範囲外は NULL + Warn。
+
+5.2 上り3F
+
+入力: Last3FRaw（例: 34.2）。
+
+変換: Last3FSec = float(Last3FRaw)。
+
+検証: 30 ≤ Last3FSec ≤ 40 を基本レンジ、外れ値は FlagOutlier=1。
+
+6. 通過順（コーナー順位）
+
+CornerOrderRaw を - で分割し、最大4要素を CornerOrder1..4 に格納。
+
+値検証: 1..18、欠損は NULL。2角しかないコースは 3..4 を NULL。
+
+7. オッズ・人気（O1/O2）
+
+TanshoRaw は 4桁固定 を 10 分の 1 にスケール → Tansho（例: 0024→2.4）。
+
+Ninki は 1..18 以外は NULL。速報/途中時点の欠損に注意。
+
+8. 馬場・天候
+
+WeatherCD/BabaCD はコード表に従う（芝: 良/稍/重/不、ダ: 良/稍/重/不）。
+
+コードは TEXT として保持（将来の追加・変更に対して安全）。
+
+9. 取り込み時の「誤読しやすい」ポイントと対策
+
+track の型不一致: 05 を int 化して 5 になり、マージで型衝突（object vs int64）。→ TEXT固定。
+
+RaceNo の先頭ゼロ欠落: 01 が 1 に。→ TEXT固定。
+
+同着処理: 同順位を共有し、次順位は飛ぶ。→ ランク計算ロジックの単体テスト必須。
+
+降着/失格: 公式確定後の順位を採用。ただし FinishStatus に 事象 を保持。
+
+着差の非数値: 「ハナ/アタマ/クビ/大差」→ 換算表 を適用。
+
+タイムのフォーマット揺れ: 59.8 vs 1:00.1。→ : の有無で分岐。
+
+通過順の欠損/短縮: 2角コースで3・4角が無い。→ NULL 補完。
+
+人気の外れ値: 0, 99 → 途中データ。→ NULL。
+
+前走リンク欠落: HorseID 欠落や海外→ フォールバックキー か 無前走 と明示。
+
+速報 vs 確定の混在: ジョブ順序で確定データに上書きする。更新日時で勝つ方を採用。
+
+10. C# 変換ユーティリティ（抜粋）
+常に詳細を表示する
+static decimal ParseOdds4(string raw) {
+    if (string.IsNullOrWhiteSpace(raw)) return 0m;
+    return decimal.Parse(raw) / 10m; // "0024" -> 2.4
+}
+
+static double ParseTimeToSec(string raw) {
+    if (string.IsNullOrWhiteSpace(raw)) return double.NaN;
+    raw = raw.Trim();
+    if (raw.Contains(":")) {
+        var parts = raw.Split(':');
+        int min = int.Parse(parts[0]);
+        double sec = double.Parse(parts[1]);
+        return min * 60 + sec;
+    }
+    return double.Parse(raw); // "59.8"
+}
+
+static double ParseMarginLen(string raw) {
+    if (string.IsNullOrWhiteSpace(raw)) return 0.0;
+    raw = raw.Replace("　"," ").Trim();
+    // mapping
+    var map = new Dictionary<string,double> {
+        ["ハナ"]=0.1, ["アタマ"]=0.2, ["クビ"]=0.3, ["大差"]=6.0
+    };
+    if (map.TryGetValue(raw, out var v)) return v;
+    // fractional (e.g., "1 1/4", "3/4")
+    raw = raw.Replace("／","/");
+    if (raw.Contains(" ")) {
+        var sp = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return sp.Sum(ParseMarginLen); // "1" + "1/4"
+    }
+    if (raw.Contains("/")) {
+        var fr = raw.Split('/');
+        return double.Parse(fr[0]) / double.Parse(fr[1]);
+    }
+    return double.Parse(raw); // integer lengths "2"
+}
+
+static double MarginLenToSec(double len) => len * 0.20;
+
+11. 検証チェックリスト（抜粋）
+
+キー一意性: RaceKey（races）, EntryKey（entries）。
+
+範囲検証: Umaban 1..18、Finish 1..18、Last3F 30..40。
+
+型検証: TrackCD/RaceNo が TEXT（先頭ゼロ保持）。
+
+前走存在率: has_prev 比率を日次・場別でモニタ。
+
+同着整合: COUNT(Finish=1) in (1,>1) の場合、次位が 1+count であること。
+
+欠損率: MarginRaw/FinishTimeRaw/Last3FRaw 欠損を監視。
+
+速報置換: 確定データの更新タイムスタンプで上書きされていること。
+
+監査用SQL（例）
+常に詳細を表示する
+-- 型事故の検出（track が INT 化されていないか）
+SELECT typeof(TrackCD), COUNT(*) FROM races GROUP BY 1;
+
+-- 同着整合
+WITH w AS (
+  SELECT RaceKey, Finish, COUNT(*) c FROM results_entries
+   WHERE Finish IS NOT NULL GROUP BY 1,2
+)
+SELECT RaceKey
+FROM w
+GROUP BY RaceKey
+HAVING SUM(CASE WHEN Finish=1 THEN c ELSE 0 END) IN (0) -- 1着が存在しない
+   OR MAX(Finish) < (SELECT MAX(Finish) FROM w w2 WHERE w2.RaceKey=w.RaceKey);
+
+-- 前走リンク欠落率
+SELECT strftime('%Y-%m', cur.RaceDate) AS ym, COUNT(*) AS n,
+       SUM(CASE WHEN p.RaceKey IS NULL THEN 1 ELSE 0 END) AS no_prev
+FROM current_entries cur
+LEFT JOIN prev_link p ON p.EntryKey = cur.EntryKey
+GROUP BY 1 ORDER BY 1;
+
+12. 運用ルール（ETL順）
+
+確定結果（RA/SE/HR）→ results_* へ上書き取り込み（文字列を TEXT のまま、ゼロ保持）。
+
+O1/O2 を 別テーブル で更新（速報差分が混ざらないようにバージョン管理）。
+
+prev_link ビューを更新（HorseID 既定、フォールバック鍵は別ビュー）。
+
+監査ジョブを実行（§11 SQL）。
+
+失敗時は ロールバック（トランザクション境界）。
+
+13. 付録: pandas の dtype 指定例
+常に詳細を表示する
+read_csv(..., dtype={{
+  'RaceKey':'string','TrackCD':'string','RaceNo':'string','Umaban':'Int64',
+  'TanshoRaw':'string','WeatherCD':'string','BabaCD':'string'
+}})
+
+備考
+
+着差換算はモデリング都合の便宜的定義。将来的に距離・芝ダ別係数を導入しても OK。
+
+降着/失格は「確定順位」を採るが、FinishStatus で事象は必ず保持すること。
+
+海外・地方の前走は原則リンク対象外（別データソース管理）。
+
+"""
+
+content = template.replace("<DATE>", date_str)
+
+path = "/mnt/data/jravan_data_rules_v1.md"
+with open(path, "w", encoding="utf-8") as f:
+f.write(content)
+
+path
+
+常に詳細を表示する
+結果
+'/mnt/data/jravan_data_rules_v1.md'
+
+やります。前走特化の「JRAVANデータ規則表（実装向け）」をまとめて、ダウンロードできるMarkdownにしました。
+Download: jravan_data_rules_v1.md
+
+主なポイント（要約）
+
+キーと同定：RaceKey = YYYYMMDD + 場(2桁) + R(2桁)、TrackCD/RaceNoは常にTEXT（ゼロ保持）で型事故を防止。
+
+オッズ：TanshoRaw（4桁固定）→ 10分の1で実数化（例 0024→2.4）。
+
+着順・事象：同着は同順位共有、次順位を飛ばす／降着・失格は確定順位を採用しつつFinishStatusで事象も保持。
+
+着差：プロジェクト規約で「ハナ=0.1馬身、アタマ=0.2、クビ=0.3、分数は数値化」、1馬身=0.20秒換算（モデリング都合、後で距離別係数に拡張可）。
+
+タイム：1:33.4 → 秒に正規化、上り3Fは 30–40秒レンジ外を外れ値フラグ。
+
+通過順：12-11-5-1 を分割（コーナー数2/3/4対応、欠損はNULL）。
+
+前走リンク：HorseIDで RaceDate < 当日の最新1件を取得／欠落時は暫定フォールバック鍵（名前+生年+性）も規定。
+
+監査SQL・C#ユーティリティ付き：型衝突検知、同着整合、前走リンク欠落率の監視などを即投入可能。
+
+必要なら、この規則に合わせた自動検証クエリの追加やC#ユニットテスト雛形も今のプロジェクト構成に合わせて出します。今の前走取得や「trackのint/string混在」など、つまずきやすい所はすべて規則に織り込んであります。 
+
+あなた:
+血統番号とか、騎手番号、マスタ関連は？
+前走、前々走、前々々走とか、まだまだありますよね
+ChatGPT:
+分析が終了しました
+常に詳細を表示する
+# Extend the JRAVAN rules with Master IDs and multi-previous (前走1〜3) materialization.
+from datetime import datetime
+
+date_str = datetime.now().strftime('%Y-%m-%d')
+
+content = f"""
+# JRAVAN データ規則表（前走特化・v1.1 / マスタ＆n-back拡張）
+更新日: {date_str}
+
+本版では、**血統番号／騎手番号などのマスタ参照**と、**前走・前々走・前々々走（n-back=1..3）**の取り回し規則を追加。  
+対象カテゴリ例: `RACE/RA/SE/HR`, `O1/O2`, `DIFN/DIFF`, `BLDN`, `HOSN/HOYU`, `TOKU`, `YSCH`, `SLOP`, `SNAP` など。
+
+---
+
+## 14. マスタ系 ID・コードの正規化（外部キー設計）
+全マスタ ID は **TEXT（ゼロパディング保持）**。アプリ内で int 化しない。
+
+| 概念 | 列名（推奨） | 供給元の典型 | 物理型 | 例 | 備考 |
+|---|---|---|---|---|---|
+| 馬ID | `HorseID` | HR/SE | TEXT | `2017101234` | 生年+通番など。改名・抹消に注意 |
+| 血統登録番号（父） | `SireID` | BLDN/HR | TEXT | `1996000123` | 父馬の血統番号 |
+| 血統登録番号（母） | `DamID` | BLDN/HR | TEXT | `2003000456` | |
+| 血統登録番号（母父） | `BroodmareSireID` | BLDN/HR | TEXT | `1990000789` | |
+| 騎手コード | `JockeyCode` | SE/HR/HOSN | TEXT | `01023` | 桁はベンダ依存、ゼロ保持 |
+| 調教師コード | `TrainerCode` | HR/HOSN | TEXT | `09055` | |
+| 馬主コード | `OwnerCode` | HR/HOYU | TEXT | `A12345` | 英数混在も想定 |
+| 生産者コード | `BreederCode` | HR/HOYU | TEXT | `B00456` | |
+| 競馬場コード | `TrackCD` | RA/SE/RACE | TEXT(2) | `05` | 先頭ゼロ保持 |
+| コース・距離 | `CourseKind`,`Distance` | RA | TEXT/INT | `芝右内` / `1600` | `CourseKind` は TEXT |
+
+### 正規化方針
+- `races`（レース単位）: `RaceKey`,`TrackCD`,`RaceNo`,`RaceDate`,`CourseKind`,`Distance` …  
+- `entries`（出走馬）: `EntryKey`,`RaceKey`,`HorseID`,`Umaban`,`Wakuban`,`JockeyCode`,`TrainerCode` …  
+- `results_entries`（確定成績）: `EntryKey`,`Finish`,`FinishTimeSec`,`MarginRaw` …  
+- `horse_master`（HR+BLDN統合ビュー）: `HorseID`,`UmaName`,`Sex`,`BirthYear`,`SireID`,`DamID`,`BroodmareSireID`…  
+- `person_master`（任意）: `JockeyCode`,`JockeyName` / `TrainerCode`,`TrainerName` …  
+- `owner_master` / `breeder_master` …
+
+**外部キー**（推奨）:
+```sql
+ALTER TABLE entries ADD FOREIGN KEY (HorseID) REFERENCES horse_master(HorseID);
+ALTER TABLE entries ADD FOREIGN KEY (JockeyCode) REFERENCES person_master(JockeyCode);
+ALTER TABLE horse_master ADD FOREIGN KEY (SireID) REFERENCES horse_master(HorseID);
+
+15. マスタ取得・更新の運用（差分/完全）
+
+完全更新: BLDN（血統系）、HOSN/HOYU（所属・馬主生産者）を セットアップで初期取得。
+
+差分更新: DIFN/DIFF で日次差分を取り込み、マスタへアップサート。
+
+照合キー: 文字列一致（TRIM/全角→半角）＋ ID 優先。名前一致のみで更新しない。
+
+名前揺れ対策:
+
+騎手・調教師の改姓／表記揺れに備え EffectiveFrom/To を持つ履歴テーブルを用意。
+
+エントリ側は JockeyCode を主とし、名前は都度 JOIN で解決。
+
+16. n-back（前走1〜3）リンクの作り方
+
+「同一馬の直近出走」を 窓関数で切り出して固定ビュー化。海外・地方は別扱い（除外または別テーブル）。
+
+常に詳細を表示する
+-- 全履歴（JRA）の窓付け
+CREATE VIEW IF NOT EXISTS v_hist AS
+SELECT
+  he.EntryKey, he.RaceKey, he.HorseID,
+  r.RaceDate, r.TrackCD, r.RaceNo,
+  he.Finish, he.FinishStatus, he.FinishTimeSec, he.MarginRaw,
+  he.Last3FSec, he.CornerOrderRaw
+FROM results_entries he
+JOIN results_races r USING(RaceKey)
+WHERE he.HorseID IS NOT NULL;
+
+-- n-back 付与（当日 entries に対して）
+CREATE VIEW IF NOT EXISTS v_prev123 AS
+WITH ordered AS (
+  SELECT
+    e.EntryKey AS CurEntryKey, e.HorseID, r.RaceDate AS CurDate,
+    h.RaceKey, h.RaceDate, h.TrackCD, h.RaceNo,
+    h.Finish, h.FinishTimeSec, h.MarginRaw, h.Last3FSec, h.CornerOrderRaw,
+    ROW_NUMBER() OVER (
+      PARTITION BY e.EntryKey
+      ORDER BY h.RaceDate DESC, h.RaceKey DESC
+    ) AS rn
+  FROM entries e
+  JOIN races r ON r.RaceKey = e.RaceKey
+  JOIN v_hist h ON h.HorseID = e.HorseID AND h.RaceDate < r.RaceDate
+)
+SELECT
+  CurEntryKey,
+  MAX(CASE WHEN rn=1 THEN RaceKey END) AS Prev1_RaceKey,
+  MAX(CASE WHEN rn=1 THEN Finish END) AS Prev1_Finish,
+  MAX(CASE WHEN rn=1 THEN FinishTimeSec END) AS Prev1_Time,
+  MAX(CASE WHEN rn=1 THEN Last3FSec END) AS Prev1_Last3F,
+  MAX(CASE WHEN rn=2 THEN RaceKey END) AS Prev2_RaceKey,
+  MAX(CASE WHEN rn=2 THEN Finish END) AS Prev2_Finish,
+  MAX(CASE WHEN rn=3 THEN RaceKey END) AS Prev3_RaceKey,
+  MAX(CASE WHEN rn=3 THEN Finish END) AS Prev3_Finish
+FROM ordered
+WHERE rn <= 3
+GROUP BY CurEntryKey;
+
+16.1 取得ルール
+
+除外: FinishStatus IN ('DNS','SCR')。DNF/DQ は要件に応じて含めるが 別フラグで管理。
+
+重複開催日: 同日複数レースは RaceKey 降順で解決。
+
+17. 主要集計（n-back を使った特徴量例）
+
+前走対前々走の位置取り改善: Prev2_Corner1 - Prev1_Corner1（マイナスは前進）。
+
+前走指数（例）: StdScore = z(FinishTimeSec by Track×Distance×Baba)。
+
+連動人気トレンド: Prev1_Ninki と O1 当日単勝の差。
+
+血統バイアス: SireID 単位のコース別複勝回収率。
+
+18. スキーマ追加（推奨列）
+
+results_entries に以下の正規化列を固定で持たせる：
+
+列名	型	説明
+FinishTimeRaw / FinishTimeSec	TEXT / REAL	文字→秒の両持ち
+MarginRaw / MarginLen / MarginSec	TEXT / REAL / REAL	換算は v1.0 §4
+CornerOrderRaw / Corner1..4	TEXT / INT	コーナー展開
+Ninki	INT	1..18 (欠損NULL)
+OddsTansho	REAL	4桁→/10
+JockeyCode / TrainerCode	TEXT	型固定
+SireID / DamID / BroodmareSireID	TEXT	HR/BLDN由来
+19. 取り込み順と依存関係（再掲＋拡張）
+
+セットアップ: YSCH（開催枠）→ RACE/RA（番組）→ BLDN/HOSN/HOYU（マスタ一括）。
+
+速報/確定: SE/HR（確定）→ O1/O2（オッズ）→ DIFN/DIFF（差分）を順に。
+
+正規化: 型・ゼロ保持、着差/タイム換算。
+
+マスタUPSERT: *_Code キー一致で上書き、名前は属性。
+
+リンク更新: v_prev123 再生成。
+
+監査: 前走存在率、コード不整合、型逸脱（TEXT→INT化）を SQL でチェック。
+
+20. サンプル: pandas マージの堅牢化
+常に詳細を表示する
+dtype = {{
+  "RaceKey":"string","TrackCD":"string","RaceNo":"string",
+  "EntryKey":"string","HorseID":"string",
+  "JockeyCode":"string","TrainerCode":"string",
+  "SireID":"string","DamID":"string","BroodmareSireID":"string"
+}}
+entries = pd.read_parquet("entries.parquet")
+results = pd.read_parquet("results_entries.parquet")
+prev = pd.read_parquet("v_prev123.parquet")
+df = (entries.astype(dtype)
+      .merge(results[["EntryKey","Finish","FinishTimeSec"]], on="EntryKey", how="left")
+      .merge(prev, left_on="EntryKey", right_on="CurEntryKey", how="left"))
+
+21. よくある落とし穴（マスタ編）
+
+同名別人（騎手・調教師）: Code が唯一のキー。名前一致で更新しない。
+
+馬の改名: HorseID は不変。名前は履歴管理。
+
+種牡馬の世代差異: 同名の父子が存在し得るため ID参照必須。
+
+外部ソース併合: 先に**正規化（trim/全半角/カタカナ/長音）**を済ませてから一致判定。
+
+22. 追加のダッシュボード監査（SQL）
+常に詳細を表示する
+-- 前走/前々走/前々々走の存在率
+SELECT
+  strftime('%Y-%m', r.RaceDate) ym,
+  COUNT(*) n,
+  SUM(CASE WHEN p.Prev1_RaceKey IS NULL THEN 1 ELSE 0 END) no_prev1,
+  SUM(CASE WHEN p.Prev2_RaceKey IS NULL THEN 1 ELSE 0 END) no_prev2,
+  SUM(CASE WHEN p.Prev3_RaceKey IS NULL THEN 1 ELSE 0 END) no_prev3
+FROM entries e
+JOIN races r USING(RaceKey)
+LEFT JOIN v_prev123 p ON p.CurEntryKey = e.EntryKey
+GROUP BY 1 ORDER BY 1;
+
+付記
+
+本規則は 実装都合の統一規約。ベンダ仕様の細部差異がある場合でも 型とキーの一貫性を最優先。
+
+画像のようなカテゴリ（BLDN/DIFN/DIFF/...）は セットアップ→差分 の二層で回すと事故が減ります。
+"""
+
+path = "/mnt/data/jravan_data_rules_v1.1_master_prev.md"
+with open(path, "w", encoding="utf-8") as f:
+f.write(content)
+
+path
+
+常に詳細を表示する
+結果
+'/mnt/data/jravan_data_rules_v1.1_master_prev.md'
+
+いい指摘です。マスタ系（血統番号・騎手番号ほか）と、「前走/前々走/前々々走」までの取り回しを拡張版として追加しました。
+
+追加ドキュメント（v1.1：マスタ＆n-back拡張）
+Download: jravan_data_rules_v1.1_master_prev.md
+
+中身のハイライト
+
+マスタID正規化（すべてTEXT/ゼロ保持）：HorseID / SireID / DamID / BroodmareSireID / JockeyCode / TrainerCode / OwnerCode / BreederCode を表で定義。BLDN・HOSN/HOYUなどからUPSERT、名前一致だけで更新しない規約も明記。
+
+前走1〜3（n-back）ビュー：ROW_NUMBER()で直近の出走を切り出し、Prev1_* / Prev2_* / Prev3_* を固定ビュー化するSQLを収録。DNS/SCRは除外、DNF/DQの扱いはフラグで制御。
+
+エンティティ設計：races / entries / results_entries / horse_master / person_master の外部キー例を提示（SireIDのセルフ参照FKも例示）。
+
+取り込み順：YSCH→RACE/RA→BLDN/HOSN/HOYU（セットアップ）→SE/HR→O1/O2→DIFN/DIFF の順で正規化→リンク更新→監査。
+
+監査SQL：前走1〜3の存在率、コード不整合、型崩れ検出をダッシュボード化できるクエリ付き。
+
+pandas統合作法：dtype一括指定→entries×results_entries×v_prev123の堅牢マージ例を記載。
+
+この拡張で、画像の黄色群（BLDN/DIFN/DIFF/HOSN/HOYU/TOKU/YSCH/SNAP...）も運用に組み込めます。
+さらに必要なら、**Jockey/Trainer/Owner/Breederの履歴管理（EffectiveFrom/To）**や、**血統グラフ（父→子の再帰CTE）**のSQLもすぐ足します。 
+
+あなた:
+最後に前走の間隔、とか距離の短縮とかはひっかくですか計算
+ChatGPT:
+分析エラーが発生しました
+常に詳細を表示する
+# Create an addendum (v1.2) covering layoff days and distance-change calculations with SQL/C#/pandas snippets.
+from datetime import datetime
+date = datetime.now().strftime("%Y-%m-%d")
+
+md = f"""
+# JRAVAN データ規則表 追補（v1.2）— 前走間隔・距離変化の計算
+更新日: {date}
+
+本追補では、**前走間隔（LayoffDays）** と **距離変化（DistanceDelta / ChangeType）** を、
+既出の `entries / races / v_prev123` を前提に**決定的に算出**するルールと実装例を示します。
+
+---
+
+## 1) 定義
+- **LayoffDays** = `CurRaceDate - Prev1_RaceDate`（日数, 自然日差; 同日なら 0）。  
+- **DistanceDelta** = `CurDistance - Prev1_Distance`（メートル; 短縮は負、延長は正）。  
+- **ChangeType** ∈ `SHORTEN / SAME / STRETCH / UNKNOWN`。  
+  - `DistanceDelta < -50` → `SHORTEN`（50m未満はゲート位置等の誤差として **SAME** 扱い可）  
+  - `|DistanceDelta| ≤ 50` → `SAME`  
+  - `DistanceDelta > 50` → `STRETCH`
+
+> 注: 距離は `races.Distance`（整数, m）を使用。地方/海外を除外した `Prev1` を参照します。
+
+---
+
+## 2) SQLite（標準SQL）— 特徴量ビュー `v_prev_feat`
+`v_prev123`（前走リンク）と `races`（当日/前走の距離・日付）を用いて算出。
+
+```sql
+-- 当日レース情報（距離・日付）を付加
+WITH cur AS (
+  SELECT e.EntryKey, e.RaceKey, r.RaceDate AS CurDate, r.Distance AS CurDistance
+  FROM entries e
+  JOIN races r USING(RaceKey)
+),
+prev1 AS (
+  SELECT p.CurEntryKey, p.Prev1_RaceKey
+  FROM v_prev123 p
+),
+prev_r AS (
+  SELECT r.RaceKey, r.RaceDate AS PrevDate, r.Distance AS PrevDistance
+  FROM races r
+)
+CREATE VIEW IF NOT EXISTS v_prev_feat AS
+SELECT
+  c.EntryKey,
+  c.CurDate,
+  p.Prev1_RaceKey,
+  pr.PrevDate,
+  c.CurDistance,
+  pr.PrevDistance,
+  CASE
+    WHEN pr.PrevDate IS NULL THEN NULL
+    ELSE CAST(julianday(c.CurDate) - julianday(pr.PrevDate) AS INT)
+  END AS LayoffDays,
+  CASE
+    WHEN pr.PrevDistance IS NULL THEN NULL
+    ELSE (c.CurDistance - pr.PrevDistance)
+  END AS DistanceDelta,
+  CASE
+    WHEN pr.PrevDistance IS NULL THEN 'UNKNOWN'
+    WHEN ABS(c.CurDistance - pr.PrevDistance) <= 50 THEN 'SAME'
+    WHEN (c.CurDistance - pr.PrevDistance) < -50 THEN 'SHORTEN'
+    ELSE 'STRETCH'
+  END AS ChangeType
+FROM cur c
+LEFT JOIN prev1 p ON p.CurEntryKey = c.EntryKey
+LEFT JOIN prev_r pr ON pr.RaceKey = p.Prev1_RaceKey;
+
+2.1 バケット化（分析用）
+常に詳細を表示する
+-- Layoff の期間帯分類
+CREATE VIEW IF NOT EXISTS v_prev_feat_bucket AS
+SELECT
+  f.*,
+  CASE
+    WHEN LayoffDays IS NULL THEN 'NO_PREV'
+    WHEN LayoffDays <= 14 THEN '≤2W'
+    WHEN LayoffDays <= 28 THEN '3-4W'
+    WHEN LayoffDays <= 56 THEN '5-8W'
+    WHEN LayoffDays <= 84 THEN '9-12W'
+    WHEN LayoffDays <= 168 THEN '13-24W'
+    ELSE '25W+'
+  END AS LayoffBucket
+FROM v_prev_feat f;
+
+3) C#（.NET）— 計算ユーティリティ
+常に詳細を表示する
+public static class RaceFeature
+{
+    public static int? LayoffDays(DateTime? cur, DateTime? prev)
+        => (cur.HasValue && prev.HasValue) ? (int?)(cur.Value.Date - prev.Value.Date).TotalDays : null;
+
+    public static int? DistanceDelta(int? cur, int? prev)
+        => (cur.HasValue && prev.HasValue) ? (int?)(cur.Value - prev.Value) : null;
+
+    public static string ChangeType(int? delta, int tolerance = 50)
+    {
+        if (!delta.HasValue) return "UNKNOWN";
+        if (Math.Abs(delta.Value) <= tolerance) return "SAME";
+        return (delta.Value < 0) ? "SHORTEN" : "STRETCH";
+    }
+}
+
+4) pandas（Python）— 安全な型指定と結合
+常に詳細を表示する
+dtype = {
+  "EntryKey":"string","RaceKey":"string",
+  "CurDate":"string","PrevDate":"string"
+}
+feat = prev_feat_df.astype(dtype).assign(
+    LayoffDays=lambda d: (pd.to_datetime(d["CurDate"]) - pd.to_datetime(d["PrevDate"])).dt.days,
+    DistanceDelta=lambda d: d["CurDistance"].astype("Int64") - d["PrevDistance"].astype("Int64"),
+)
+tol = 50
+feat["ChangeType"] = feat["DistanceDelta"].apply(
+    lambda x: "UNKNOWN" if pd.isna(x)
+              else ("SAME" if abs(int(x)) <= tol else ("SHORTEN" if int(x) < 0 else "STRETCH"))
+)
+
+5) 仕様上の注意
+
+Prev1 が無い（新馬・海外明け）：LayoffDays/DistanceDelta/ChangeType は NULL/UNKNOWN。
+
+同日：LayoffDays=0。開催跨ぎの夜間競走などは 日付で判断（時刻は不要）。
+
+距離誤差：芝/ダ障害で 50m 以内は SAME とする実運用が多く、閾値はテーブル管理可。
+
+クラス替わりや コース向き（直線長/コーナー数）は別特徴で扱う。
+
+6) 監査SQL（抜粋）
+常に詳細を表示する
+-- 距離情報欠落の検出
+SELECT COUNT(*) AS no_dist
+FROM v_prev_feat
+WHERE CurDistance IS NULL OR (Prev1_RaceKey IS NOT NULL AND PrevDistance IS NULL);
+
+-- Layoff の異常（負の日数）
+SELECT EntryKey, CurDate, PrevDate, LayoffDays
+FROM v_prev_feat
+WHERE LayoffDays < 0;
+
+
+"""
+
+path = "/mnt/data/jravan_data_rules_v1.2_layoff_distance.md"
+with open(path, "w", encoding="utf-8") as f:
+f.write(md)
+
+path
+
+常に詳細を表示する
+  Cell In[4], line 95
+    public static int? LayoffDays(DateTime? cur, DateTime? prev)
+    ^
+SyntaxError: f-string: invalid syntax. Perhaps you forgot a comma?
+
+
+分析が終了しました
+常に詳細を表示する
+# Re-run without f-string braces interfering by using a normal template replacement.
+from datetime import datetime
+date = datetime.now().strftime("%Y-%m-%d")
+
+tmpl = """
+# JRAVAN データ規則表 追補（v1.2）— 前走間隔・距離変化の計算
+更新日: <DATE>
+
+本追補では、**前走間隔（LayoffDays）** と **距離変化（DistanceDelta / ChangeType）** を、
+既出の `entries / races / v_prev123` を前提に**決定的に算出**するルールと実装例を示します。
+
+---
+
+## 1) 定義
+- **LayoffDays** = `CurRaceDate - Prev1_RaceDate`（日数, 自然日差; 同日なら 0）。  
+- **DistanceDelta** = `CurDistance - Prev1_Distance`（メートル; 短縮は負、延長は正）。  
+- **ChangeType** ∈ `SHORTEN / SAME / STRETCH / UNKNOWN`。  
+  - `DistanceDelta < -50` → `SHORTEN`（50m未満はゲート位置等の誤差として **SAME** 扱い可）  
+  - `|DistanceDelta| ≤ 50` → `SAME`  
+  - `DistanceDelta > 50` → `STRETCH`
+
+> 注: 距離は `races.Distance`（整数, m）を使用。地方/海外を除外した `Prev1` を参照します。
+
+---
+
+## 2) SQLite（標準SQL）— 特徴量ビュー `v_prev_feat`
+`v_prev123`（前走リンク）と `races`（当日/前走の距離・日付）を用いて算出。
+
+```sql
+-- 当日レース情報（距離・日付）を付加
+WITH cur AS (
+  SELECT e.EntryKey, e.RaceKey, r.RaceDate AS CurDate, r.Distance AS CurDistance
+  FROM entries e
+  JOIN races r USING(RaceKey)
+),
+prev1 AS (
+  SELECT p.CurEntryKey, p.Prev1_RaceKey
+  FROM v_prev123 p
+),
+prev_r AS (
+  SELECT r.RaceKey, r.RaceDate AS PrevDate, r.Distance AS PrevDistance
+  FROM races r
+)
+CREATE VIEW IF NOT EXISTS v_prev_feat AS
+SELECT
+  c.EntryKey,
+  c.CurDate,
+  p.Prev1_RaceKey,
+  pr.PrevDate,
+  c.CurDistance,
+  pr.PrevDistance,
+  CASE
+    WHEN pr.PrevDate IS NULL THEN NULL
+    ELSE CAST(julianday(c.CurDate) - julianday(pr.PrevDate) AS INT)
+  END AS LayoffDays,
+  CASE
+    WHEN pr.PrevDistance IS NULL THEN NULL
+    ELSE (c.CurDistance - pr.PrevDistance)
+  END AS DistanceDelta,
+  CASE
+    WHEN pr.PrevDistance IS NULL THEN 'UNKNOWN'
+    WHEN ABS(c.CurDistance - pr.PrevDistance) <= 50 THEN 'SAME'
+    WHEN (c.CurDistance - pr.PrevDistance) < -50 THEN 'SHORTEN'
+    ELSE 'STRETCH'
+  END AS ChangeType
+FROM cur c
+LEFT JOIN prev1 p ON p.CurEntryKey = c.EntryKey
+LEFT JOIN prev_r pr ON pr.RaceKey = p.Prev1_RaceKey;
+
+2.1 バケット化（分析用）
+常に詳細を表示する
+-- Layoff の期間帯分類
+CREATE VIEW IF NOT EXISTS v_prev_feat_bucket AS
+SELECT
+  f.*,
+  CASE
+    WHEN LayoffDays IS NULL THEN 'NO_PREV'
+    WHEN LayoffDays <= 14 THEN '≤2W'
+    WHEN LayoffDays <= 28 THEN '3-4W'
+    WHEN LayoffDays <= 56 THEN '5-8W'
+    WHEN LayoffDays <= 84 THEN '9-12W'
+    WHEN LayoffDays <= 168 THEN '13-24W'
+    ELSE '25W+'
+  END AS LayoffBucket
+FROM v_prev_feat f;
+
+3) C#（.NET）— 計算ユーティリティ
+常に詳細を表示する
+public static class RaceFeature
+{
+    public static int? LayoffDays(DateTime? cur, DateTime? prev)
+        => (cur.HasValue && prev.HasValue) ? (int?)(cur.Value.Date - prev.Value.Date).TotalDays : null;
+
+    public static int? DistanceDelta(int? cur, int? prev)
+        => (cur.HasValue && prev.HasValue) ? (int?)(cur.Value - prev.Value) : null;
+
+    public static string ChangeType(int? delta, int tolerance = 50)
+    {
+        if (!delta.HasValue) return "UNKNOWN";
+        if (Math.Abs(delta.Value) <= tolerance) return "SAME";
+        return (delta.Value < 0) ? "SHORTEN" : "STRETCH";
+    }
+}
+
+4) pandas（Python）— 安全な型指定と結合
+常に詳細を表示する
+dtype = {
+  "EntryKey":"string","RaceKey":"string",
+  "CurDate":"string","PrevDate":"string"
+}
+feat = prev_feat_df.astype(dtype).assign(
+    LayoffDays=lambda d: (pd.to_datetime(d["CurDate"]) - pd.to_datetime(d["PrevDate"])).dt.days,
+    DistanceDelta=lambda d: d["CurDistance"].astype("Int64") - d["PrevDistance"].astype("Int64"),
+)
+tol = 50
+feat["ChangeType"] = feat["DistanceDelta"].apply(
+    lambda x: "UNKNOWN" if pd.isna(x)
+              else ("SAME" if abs(int(x)) <= tol else ("SHORTEN" if int(x) < 0 else "STRETCH"))
+)
+
+5) 仕様上の注意
+
+Prev1 が無い（新馬・海外明け）：LayoffDays/DistanceDelta/ChangeType は NULL/UNKNOWN。
+
+同日：LayoffDays=0。開催跨ぎの夜間競走などは 日付で判断（時刻は不要）。
+
+距離誤差：芝/ダ障害で 50m 以内は SAME とする実運用が多く、閾値はテーブル管理可。
+
+クラス替わりや コース向き（直線長/コーナー数）は別特徴で扱う。
+
+6) 監査SQL（抜粋）
+常に詳細を表示する
+-- 距離情報欠落の検出
+SELECT COUNT(*) AS no_dist
+FROM v_prev_feat
+WHERE CurDistance IS NULL OR (Prev1_RaceKey IS NOT NULL AND PrevDistance IS NULL);
+
+-- Layoff の異常（負の日数）
+SELECT EntryKey, CurDate, PrevDate, LayoffDays
+FROM v_prev_feat
+WHERE LayoffDays < 0;
+
+
+"""
+
+content = tmpl.replace("<DATE>", date)
+path = "/mnt/data/jravan_data_rules_v1.2_layoff_distance.md"
+with open(path, "w", encoding="utf-8") as f:
+f.write(content)
+path
+
+常に詳細を表示する
+結果
+'/mnt/data/jravan_data_rules_v1.2_layoff_distance.md'
+
+できます。前走間隔（何日空いたか）と、距離の短縮／延長は規則・SQL・C#・pandasまでセットで追補しました。
+
+追補（v1.2：前走間隔＆距離変化）
+Download: jravan_data_rules_v1.2_layoff_distance.md
+
+要点だけ先に：
+
+LayoffDays = 当日RaceDate − 前走RaceDate（日数。新馬/海外明けはNULL）
+
+DistanceDelta = 当日Distance − 前走Distance（m。負=短縮、正=延長）
+
+ChangeType = SHORTEN / SAME / STRETCH / UNKNOWN（±50m以内はSAMEに丸め）
+
+実装はファイル内に収録：
+
+SQLiteビュー v_prev_feat：v_prev123とracesから日数差・距離差を一発算出
+
+期間帯バケット（≤2W/3–4W/…/25W+）
+
+C#ユーティリティ（LayoffDays, DistanceDelta, ChangeType）
+
+pandasでの安全な型指定＆結合例
+
+異常検出の監査SQL（負の日数、距離欠落）
+
+このままETLの最後に v_prev_feat を再生成すれば、前走1件に対する間隔＆距離変化がいつでもJOINできます。

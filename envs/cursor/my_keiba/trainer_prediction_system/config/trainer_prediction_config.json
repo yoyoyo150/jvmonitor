@@ -1,0 +1,126 @@
+{
+  "system_info": {
+    "name": "調教師管理予想システム",
+    "version": "1.0.0",
+    "description": "調教師の成績分析と予想候補生成システム",
+    "created_date": "2025-10-01",
+    "last_updated": "2025-10-01"
+  },
+  "database_config": {
+    "db_path": "C:/my_project_folder/envs/cursor/my_keiba/ecore.db",
+    "excel_db_path": "C:/my_project_folder/envs/cursor/my_keiba/trainer_prediction_system/excel_data.db",
+    "primary_table": "N_UMA_RACE",
+    "backup_table": "HORSE_MARKS",
+    "trainer_column": "ChokyosiRyakusyo",
+    "finish_order_column": "KakuteiJyuni",
+    "date_columns": {
+      "year": "Year",
+      "month_day": "MonthDay"
+    },
+    "race_columns": {
+      "jyo_cd": "JyoCD",
+      "race_num": "RaceNum",
+      "umaban": "Umaban"
+    },
+    "horse_columns": {
+      "bamei": "Bamei",
+      "ketto_num": "KettoNum"
+    },
+    "odds_columns": {
+      "tansho": "Odds",
+      "fukusho": "Fukasyokin",
+      "ninki": "Ninki"
+    }
+  },
+  "analysis_config": {
+    "date_range": {
+      "start_date": "2024-12-01",
+      "end_date": "2025-08-31",
+      "target_dates": ["20250927", "20250928"]
+    },
+    "trainer_criteria": {
+      "min_races": 1,
+      "max_races": 100,
+      "min_place_rate": 0.0,
+      "max_place_rate": 1.0,
+      "mark5_mark6_condition": {
+        "enabled": true,
+        "min_sum": 2,
+        "max_sum": 6
+      }
+    },
+    "course_type_filter": {
+      "enabled": true,
+      "turf_only": false,
+      "dirt_only": false,
+      "combined": true
+    },
+    "overseas_race_exclusion": {
+      "enabled": true,
+      "max_horses": 3,
+      "exclude_missing_marks": true
+    }
+  },
+  "quality_control": {
+    "data_validation": {
+      "check_null_values": true,
+      "check_date_format": true,
+      "check_trainer_names": true,
+      "check_finish_orders": true
+    },
+    "result_validation": {
+      "min_trainer_count": 1,
+      "max_trainer_count": 1000,
+      "expected_place_rate_range": [0.0, 1.0],
+      "consistency_check": true
+    },
+    "output_validation": {
+      "csv_encoding": "utf-8-sig",
+      "json_pretty_print": true,
+      "log_level": "INFO"
+    }
+  },
+  "output_config": {
+    "output_directory": "outputs",
+    "log_directory": "logs",
+    "file_formats": ["csv", "json", "html"],
+    "naming_convention": {
+      "trainer_analysis": "trainer_analysis_{date}.csv",
+      "candidate_generation": "candidates_{date}.csv",
+      "quality_report": "quality_report_{date}.json"
+    }
+  },
+    "jvmonitor_alignment": {
+      "enabled": true,
+      "target_table": "N_UMA_RACE",
+      "expected_trainer_count": 180,
+      "tolerance": 10,
+      "validation_methods": [
+        "trainer_count_check",
+        "place_rate_validation",
+        "date_range_validation"
+      ]
+    },
+  "prediction_config": {
+    "candidate_selection": {
+      "high_performance_trainers": true,
+      "place_rate_threshold": 0.25,
+      "min_races_threshold": 1,
+      "mark5_mark6_weight": 0.3,
+      "trainer_performance_weight": 0.7
+    },
+    "scoring_system": {
+      "win_score": 3.0,
+      "place_score": 2.0,
+      "show_score": 1.0,
+      "other_score": 0.0,
+      "consistency_bonus": 0.1
+    }
+  },
+  "monitoring": {
+    "performance_tracking": true,
+    "error_logging": true,
+    "data_quality_metrics": true,
+    "jvmonitor_comparison": true
+  }
+}

@@ -1,0 +1,40 @@
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.pyi
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Machine learning outputs
+ml/model_artifacts/
+ml/output/
+
+# Databases and large generated files
+*.db
+*.db-*
+*.db-shm
+*.db-wal
+
+# Visual Studio & .NET build outputs
+**/bin/
+**/obj/
+*.user
+*.suo
+*.vs/
+*.docstates
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Local work directories
+envs/cursor/my_keiba/yDate/
+envs/cursor/my_keiba/_work/

@@ -1,0 +1,121 @@
+{
+  "prediction_factors": {
+    "corner_rebound": {
+      "enabled": true,
+      "weight": 100.0,
+      "description": "通過反発フラグ（2C→3C下降、3C→4C上昇）",
+      "learning_rate": 0.01,
+      "auto_adjust": true,
+      "performance_history": []
+    },
+    "sire_place_rate": {
+      "enabled": true,
+      "weight": 1.0,
+      "description": "父血統の複勝率（コース×脚質別）",
+      "learning_rate": 0.005,
+      "auto_adjust": true,
+      "performance_history": []
+    },
+    "damsire_place_rate": {
+      "enabled": true,
+      "weight": 0.7,
+      "description": "母父血統の複勝率（コース×脚質別）",
+      "learning_rate": 0.005,
+      "auto_adjust": true,
+      "performance_history": []
+    },
+    "training_acceleration": {
+      "enabled": true,
+      "weight": 15.0,
+      "description": "調教加速フラグ（坂路/ウッド）",
+      "learning_rate": 0.02,
+      "auto_adjust": true,
+      "performance_history": []
+    }
+  },
+  "prediction_models": {
+    "conservative": {
+      "name": "保守的予想",
+      "corner_rebound_weight": 80.0,
+      "sire_weight": 0.8,
+      "damsire_weight": 0.5,
+      "training_weight": 12.0,
+      "description": "安定性重視の予想モデル"
+    },
+    "balanced": {
+      "name": "バランス型予想",
+      "corner_rebound_weight": 100.0,
+      "sire_weight": 1.0,
+      "damsire_weight": 0.7,
+      "training_weight": 15.0,
+      "description": "現在の標準モデル"
+    },
+    "aggressive": {
+      "name": "積極的予想",
+      "corner_rebound_weight": 120.0,
+      "sire_weight": 1.2,
+      "damsire_weight": 0.9,
+      "training_weight": 18.0,
+      "description": "高配当狙いの予想モデル"
+    }
+  },
+  "scenarios": {
+    "front_decision": {
+      "name": "前決着",
+      "front_horses": 4,
+      "back_horses": 0,
+      "description": "先行馬4頭で決着"
+    },
+    "balanced": {
+      "name": "先行2+後方2",
+      "front_horses": 2,
+      "back_horses": 2,
+      "description": "先行2頭+後方2頭のバランス型"
+    },
+    "rear_focus": {
+      "name": "前1+後3",
+      "front_horses": 1,
+      "back_horses": 3,
+      "description": "先行1頭+後方3頭の後方重視"
+    }
+  },
+  "learning_config": {
+    "enabled": true,
+    "update_frequency": "daily",
+    "performance_threshold": 0.6,
+    "min_samples": 10,
+    "max_weight_adjustment": 0.2
+  },
+  "performance_tracking": {
+    "hit_rates": {},
+    "factor_effectiveness": {
+      "corner_rebound": 0.0,
+      "sire_place_rate": 0.0,
+      "damsire_place_rate": 0.0,
+      "training_acceleration": 0.0
+    },
+    "model_performance": {
+      "conservative": 0.0,
+      "balanced": 0.0,
+      "aggressive": 0.0
+    }
+  },
+  "excluded_factors": {
+    "odds": {
+      "enabled": false,
+      "reason": "前日予想では取得不可"
+    },
+    "popularity": {
+      "enabled": false,
+      "reason": "前日予想では取得不可"
+    },
+    "recent_form": {
+      "enabled": false,
+      "reason": "次走好走は当然のため除外"
+    }
+  },
+  "version": "1.0.0",
+  "last_updated": "2025-09-12",
+  "description": "競馬予想システム設定ファイル - 自動学習対応"
+}
+

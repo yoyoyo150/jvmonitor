@@ -1,0 +1,141 @@
+{
+  "PRE": {
+    "description": "前日予想（オッズ非依存）",
+    "investment_grades": ["S", "A"],
+    "rules": {
+      "S": {
+        "description": "最有力候補",
+        "conditions": {
+          "win_score_min": 0.4,
+          "m5_max": 2.0,
+          "zi_min": 70,
+          "zm_max": 15,
+          "trainer_win_rate_min": 0.15
+        }
+      },
+      "A": {
+        "description": "有力候補",
+        "conditions": {
+          "win_score_min": 0.35,
+          "m5_max": 3.0,
+          "zi_min": 65,
+          "zm_max": 20,
+          "trainer_win_rate_min": 0.12
+        }
+      },
+      "B": {
+        "description": "準有力候補",
+        "conditions": {
+          "win_score_min": 0.3,
+          "m5_max": 4.0,
+          "zi_min": 60,
+          "zm_max": 25,
+          "trainer_win_rate_min": 0.1
+        }
+      },
+      "C": {
+        "description": "普通",
+        "conditions": {
+          "win_score_min": 0.25,
+          "m5_max": 5.0,
+          "zi_min": 55,
+          "zm_max": 30,
+          "trainer_win_rate_min": 0.08
+        }
+      },
+      "D": {
+        "description": "要注意",
+        "conditions": {
+          "win_score_min": 0.2,
+          "m5_max": 6.0,
+          "zi_min": 50,
+          "zm_max": 40,
+          "trainer_win_rate_min": 0.05
+        }
+      },
+      "E": {
+        "description": "低評価",
+        "conditions": {
+          "win_score_min": 0.0,
+          "m5_max": 10.0,
+          "zi_min": 0,
+          "zm_max": 100,
+          "trainer_win_rate_min": 0.0
+        }
+      }
+    }
+  },
+  "LIVE": {
+    "description": "当日予想（オッズ考慮）",
+    "investment_grades": ["S", "A"],
+    "rules": {
+      "S": {
+        "description": "最有力候補",
+        "conditions": {
+          "win_score_min": 0.4,
+          "odds_min": 2.0,
+          "odds_max": 8.0,
+          "m5_max": 2.0,
+          "zi_min": 70,
+          "trainer_win_rate_min": 0.15
+        }
+      },
+      "A": {
+        "description": "有力候補",
+        "conditions": {
+          "win_score_min": 0.35,
+          "odds_min": 2.0,
+          "odds_max": 12.0,
+          "m5_max": 3.0,
+          "zi_min": 65,
+          "trainer_win_rate_min": 0.12
+        }
+      },
+      "B": {
+        "description": "準有力候補",
+        "conditions": {
+          "win_score_min": 0.3,
+          "odds_min": 2.0,
+          "odds_max": 15.0,
+          "m5_max": 4.0,
+          "zi_min": 60,
+          "trainer_win_rate_min": 0.1
+        }
+      },
+      "C": {
+        "description": "普通",
+        "conditions": {
+          "win_score_min": 0.25,
+          "odds_min": 2.0,
+          "odds_max": 20.0,
+          "m5_max": 5.0,
+          "zi_min": 55,
+          "trainer_win_rate_min": 0.08
+        }
+      },
+      "D": {
+        "description": "要注意",
+        "conditions": {
+          "win_score_min": 0.2,
+          "odds_min": 2.0,
+          "odds_max": 30.0,
+          "m5_max": 6.0,
+          "zi_min": 50,
+          "trainer_win_rate_min": 0.05
+        }
+      },
+      "E": {
+        "description": "低評価",
+        "conditions": {
+          "win_score_min": 0.0,
+          "odds_min": 2.0,
+          "odds_max": 100.0,
+          "m5_max": 10.0,
+          "zi_min": 0,
+          "trainer_win_rate_min": 0.0
+        }
+      }
+    }
+  }
+}
+
