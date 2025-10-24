@@ -184,33 +184,87 @@ namespace JVMonitor
         {
             try
             {
-                if (string.IsNullOrEmpty(_dbPath) || !File.Exists(_dbPath)) return;
-                await Task.Run(() =>
+                if (string.IsNullOrEmpty(_dbPath) || !File.Exists(_dbPath))
+                {
+                    LogMessage("最新成績日取得スキップ: データベースファイルが見つかりません。");
+                    return;
+                }
+
+                var latestDate = await Task.Run(() =>
                 {
                     try
                     {
-                        using var conn = new SQLiteConnection($"Data Source={_dbPath};Version=3;");
+                        using var conn = new SQLiteConnection($"Data Source={_dbPath};Version=3;Read Only=True;");
                         conn.Open();
-                        var cmd = new SQLiteCommand(@"SELECT MAX(Year || MonthDay) as max_date FROM NL_SE_RACE_UMA WHERE Year || MonthDay IS NOT NULL AND Year || MonthDay != ''", conn);
-                        var result = cmd.ExecuteScalar();
-                        if (result != null && result != DBNull.Value)
+
+                        using var cmd = conn.CreateCommand();
+                        cmd.CommandText = @"
+                            SELECT Year, MonthDay
+                              FROM NL_SE_RACE_UMA
+                             WHERE TRIM(Year) <> ''
+                               AND TRIM(MonthDay) <> ''
+                             ORDER BY CAST(Year AS INTEGER) DESC,
+                                      CAST(SUBSTR('00' || MonthDay, -4, 2) AS INTEGER) DESC,
+                                      CAST(SUBSTR('00' || MonthDay, -2) AS INTEGER) DESC
+                             LIMIT 1;";
+
+                        using var reader = cmd.ExecuteReader();
+                        if (reader.Read())
                         {
-                            var dateStr = result.ToString();
-                            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 8)
+                            var yearText = reader["Year"]?.ToString()?.Trim();
+                            var monthDayText = reader["MonthDay"]?.ToString()?.Trim();
+
+                            if (!string.IsNullOrEmpty(yearText) && !string.IsNullOrEmpty(monthDayText))
                             {
-                                var year = dateStr.Substring(0, 4);
-                                var month = dateStr.Substring(4, 2);
-                                var day = dateStr.Substring(6, 2);
-                                var displayDate = $"{year}年{month}月{day}日";
-                                if (this.InvokeRequired) { this.Invoke(new Action(() => { if (lblToday != null) lblToday.Text = $"最新成績: {displayDate}"; })); }
-                                else { if (lblToday != null) lblToday.Text = $"最新成績: {displayDate}"; }
+                                var normalizedMonthDay = monthDayText.PadLeft(4, '0');
+                                if (normalizedMonthDay.Length >= 4 &&
+                                    int.TryParse(yearText, out var year) &&
+                                    int.TryParse(normalizedMonthDay.Substring(0, 2), out var month) &&
+                                    int.TryParse(normalizedMonthDay.Substring(2, 2), out var day))
+                                {
+                                    return new DateTime(year, month, day);
+                                }
+
+                                LogMessage($"最新成績日パース失敗: Year={yearText}, MonthDay={monthDayText}");
                             }
                         }
                     }
-                    catch (Exception ex) { LogMessage($"最新成績日取得エラー: {ex.Message}"); }
+                    catch (SQLiteException ex)
+                    {
+                        LogMessage($"最新成績日取得エラー(SQLite): {ex.Message}");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"最新成績日取得エラー: {ex.Message}");
+                    }
+
+                    return (DateTime?)null;
                 });
+
+                if (latestDate.HasValue)
+                {
+                    var displayDate = latestDate.Value.ToString("yyyy年MM月dd日");
+                    if (this.InvokeRequired)
+                    {
+                        this.Invoke(new Action(() =>
+                        {
+                            if (lblToday != null) lblToday.Text = $"最新成績: {displayDate}";
+                        }));
+                    }
+                    else
+                    {
+                        if (lblToday != null) lblToday.Text = $"最新成績: {displayDate}";
+                    }
+                }
+                else
+                {
+                    LogMessage("最新成績日を取得できませんでした。");
+                }
             }
-            catch (Exception ex) { LogMessage($"RefreshLatestResultDateLabelAsync エラー: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                LogMessage($"RefreshLatestResultDateLabelAsync エラー: {ex.Message}");
+            }
         }
 
         private async void BtnRunNormal_Click(object sender, EventArgs e)
